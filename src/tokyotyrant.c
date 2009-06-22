@@ -35,7 +35,7 @@ static int config_keys_num = STATIC_ARRAY_SIZE (config_keys);
 
 static char *host = NULL;
 static int   port;
-static char  port_str[5];
+static char  port_str[6];
 
 static int tt_config (const char *key, const char *value) 
 {
@@ -53,7 +53,7 @@ static int tt_config (const char *key, const char *value)
 			ERROR ("tokyotyrant plugin: error: Port %s out of range", value);
 			return (-1);
 		}
-                ssnprintf(port_str, 5, "%i", port);
+                ssnprintf(port_str, 6, "%i", port);
 	}
 	else
 	{
