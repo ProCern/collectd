@@ -33,6 +33,7 @@
  * {{{ */
 #define UT_FLAG_INVERT  0x01
 #define UT_FLAG_PERSIST 0x02
+#define UT_FLAG_PERCENTAGE 0x04
 
 typedef struct threshold_s
 {
@@ -262,6 +263,24 @@ static int ut_config_type_persist (threshold_t *th, oconfig_item_t *ci)
   return (0);
 } /* int ut_config_type_persist */
 
+static int ut_config_type_percentage(threshold_t *th, oconfig_item_t *ci)
+{
+  if ((ci->values_num != 1)
+      || (ci->values[0].type != OCONFIG_TYPE_BOOLEAN))
+  {
+    WARNING ("threshold values: The `Percentage' option needs exactly one "
+	"boolean argument.");
+    return (-1);
+  }
+
+  if (ci->values[0].value.boolean)
+    th->flags |= UT_FLAG_PERCENTAGE;
+  else
+    th->flags &= ~UT_FLAG_PERCENTAGE;
+
+  return (0);
+} /* int ut_config_type_percentage */
+
 static int ut_config_type (const threshold_t *th_orig, oconfig_item_t *ci)
 {
   int i;
@@ -309,6 +328,8 @@ static int ut_config_type (const threshold_t *th_orig, oconfig_item_t *ci)
       status = ut_config_type_invert (&th, option);
     else if (strcasecmp ("Persist", option->key) == 0)
       status = ut_config_type_persist (&th, option);
+    else if (strcasecmp ("Percentage", option->key) == 0)
+      status = ut_config_type_percentage (&th, option);
     else
     {
       WARNING ("threshold values: Option `%s' not allowed inside a `Type' "
@@ -467,7 +488,7 @@ int ut_config (const oconfig_item_t *ci)
   th.warning_max = NAN;
   th.failure_min = NAN;
   th.failure_max = NAN;
-    
+
   for (i = 0; i < ci->children_num; i++)
   {
     oconfig_item_t *option = ci->children + i;
@@ -643,30 +664,33 @@ static int ut_report_state (const data_set_t *ds,
     {
       if (!isnan (min) && !isnan (max))
       {
-	status = ssnprintf (buf, bufsize, ": Data source \"%s\" is currently "
-	    "%f. That is within the %s region of %f and %f.",
-	    ds->ds[ds_index].name, values[ds_index],
-	    (state == STATE_ERROR) ? "failure" : "warning",
-	    min, max);
+        status = ssnprintf (buf, bufsize, ": Data source \"%s\" is currently "
+            "%f. That is within the %s region of %f%s and %f%s.",
+            ds->ds[ds_index].name, values[ds_index],
+            (state == STATE_ERROR) ? "failure" : "warning",
+            min, ((th->flags & UT_FLAG_PERCENTAGE) != 0) ? "%" : "",
+            max, ((th->flags & UT_FLAG_PERCENTAGE) != 0) ? "%" : "");
       }
       else
       {
 	status = ssnprintf (buf, bufsize, ": Data source \"%s\" is currently "
-	    "%f. That is %s the %s threshold of %f.",
+	    "%f. That is %s the %s threshold of %f%s.",
 	    ds->ds[ds_index].name, values[ds_index],
 	    isnan (min) ? "below" : "above",
 	    (state == STATE_ERROR) ? "failure" : "warning",
-	    isnan (min) ? max : min);
+	    isnan (min) ? max : min,
+	    ((th->flags & UT_FLAG_PERCENTAGE) != 0) ? "%" : "");
       }
     }
     else /* is not inverted */
     {
       status = ssnprintf (buf, bufsize, ": Data source \"%s\" is currently "
-	  "%f. That is %s the %s threshold of %f.",
+	  "%f. That is %s the %s threshold of %f%s.",
 	  ds->ds[ds_index].name, values[ds_index],
 	  (values[ds_index] < min) ? "below" : "above",
 	  (state == STATE_ERROR) ? "failure" : "warning",
-	  (values[ds_index] < min) ? min : max);
+	  (values[ds_index] < min) ? min : max,
+	  ((th->flags & UT_FLAG_PERCENTAGE) != 0) ? "%" : "");
     }
     buf += status;
     bufsize -= status;
@@ -699,10 +723,13 @@ static int ut_check_one_data_source (const data_set_t *ds,
   int is_failure = 0;
 
   /* check if this threshold applies to this data source */
-  ds_name = ds->ds[ds_index].name;
-  if ((th->data_source[0] != 0)
-      && (strcmp (ds_name, th->data_source) != 0))
-    return (STATE_OKAY);
+  if (ds != NULL)
+  {
+    ds_name = ds->ds[ds_index].name;
+    if ((th->data_source[0] != 0)
+	&& (strcmp (ds_name, th->data_source) != 0))
+      return (STATE_OKAY);
+  }
 
   if ((th->flags & UT_FLAG_INVERT) != 0)
   {
@@ -742,12 +769,49 @@ static int ut_check_one_threshold (const data_set_t *ds,
   int ret = -1;
   int ds_index = -1;
   int i;
+  gauge_t values_copy[ds->ds_num];
+
+  memcpy (values_copy, values, sizeof (values_copy));
+
+  if ((th->flags & UT_FLAG_PERCENTAGE) != 0)
+  {
+    int num = 0;
+    gauge_t sum=0.0;
+
+    if (ds->ds_num == 1)
+    {
+      WARNING ("ut_check_one_threshold: The %s type has only one data "
+          "source, but you have configured to check this as a percentage. "
+          "That doesn't make much sense, because the percentage will always "
+          "be 100%%!", ds->type);
+    }
+
+    /* Prepare `sum' and `num'. */
+    for (i = 0; i < ds->ds_num; i++)
+      if (!isnan (values[i]))
+      {
+        num++;
+	sum += values[i];
+      }
+
+    if ((num == 0) /* All data sources are undefined. */
+        || (sum == 0.0)) /* Sum is zero, cannot calculate percentage. */
+    {
+      for (i = 0; i < ds->ds_num; i++)
+        values_copy[i] = NAN;
+    }
+    else /* We can actually calculate the percentage. */
+    {
+      for (i = 0; i < ds->ds_num; i++)
+        values_copy[i] = 100.0 * values[i] / sum;
+    }
+  } /* if (UT_FLAG_PERCENTAGE) */
 
   for (i = 0; i < ds->ds_num; i++)
   {
     int status;
 
-    status = ut_check_one_data_source (ds, vl, th, values, i);
+    status = ut_check_one_data_source (ds, vl, th, values_copy, i);
     if (ret < status)
     {
       ret = status;
@@ -899,4 +963,4 @@ int ut_check_interesting (const char *name)
   return (2);
 } /* }}} int ut_check_interesting */
 
-/* vim: set sw=2 ts=8 sts=2 tw=78 fdm=marker : */
+/* vim: set sw=2 ts=8 sts=2 tw=78 et fdm=marker : */

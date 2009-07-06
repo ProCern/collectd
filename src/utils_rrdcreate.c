@@ -213,6 +213,10 @@ static int ds_get (char ***ret, /* {{{ */
       type = "COUNTER";
     else if (d->type == DS_TYPE_GAUGE)
       type = "GAUGE";
+    else if (d->type == DS_TYPE_DERIVE)
+      type = "DERIVE";
+    else if (d->type == DS_TYPE_ABSOLUTE)
+      type = "ABSOLUTE";
     else
     {
       ERROR ("rrdtool plugin: Unknown DS type: %i",
@@ -225,14 +229,14 @@ static int ds_get (char ***ret, /* {{{ */
       sstrncpy (min, "U", sizeof (min));
     }
     else
-      ssnprintf (min, sizeof (min), "%lf", d->min);
+      ssnprintf (min, sizeof (min), "%f", d->min);
 
     if (isnan (d->max))
     {
       sstrncpy (max, "U", sizeof (max));
     }
     else
-      ssnprintf (max, sizeof (max), "%lf", d->max);
+      ssnprintf (max, sizeof (max), "%f", d->max);
 
     status = ssnprintf (buffer, sizeof (buffer),
         "DS:%s:%s:%i:%s:%s",

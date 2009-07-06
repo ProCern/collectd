@@ -227,7 +227,7 @@ static jobject ctoj_jlong_to_number (JNIEnv *jvm_env, jlong value) /* {{{ */
   jmethodID m_long_constructor;
 
   /* Look up the java.lang.Long class */
-  c_long = (*jvm_env)->FindClass (jvm_env, "java.lang.Long");
+  c_long = (*jvm_env)->FindClass (jvm_env, "java/lang/Long");
   if (c_long == NULL)
   {
     ERROR ("java plugin: ctoj_jlong_to_number: Looking up the "
@@ -255,7 +255,7 @@ static jobject ctoj_jdouble_to_number (JNIEnv *jvm_env, jdouble value) /* {{{ */
   jmethodID m_double_constructor;
 
   /* Look up the java.lang.Long class */
-  c_double = (*jvm_env)->FindClass (jvm_env, "java.lang.Double");
+  c_double = (*jvm_env)->FindClass (jvm_env, "java/lang/Double");
   if (c_double == NULL)
   {
     ERROR ("java plugin: ctoj_jdouble_to_number: Looking up the "
@@ -284,6 +284,10 @@ static jobject ctoj_value_to_number (JNIEnv *jvm_env, /* {{{ */
     return (ctoj_jlong_to_number (jvm_env, (jlong) value.counter));
   else if (ds_type == DS_TYPE_GAUGE)
     return (ctoj_jdouble_to_number (jvm_env, (jdouble) value.gauge));
+  if (ds_type == DS_TYPE_DERIVE)
+    return (ctoj_jlong_to_number (jvm_env, (jlong) value.derive));
+  if (ds_type == DS_TYPE_ABSOLUTE)
+    return (ctoj_jlong_to_number (jvm_env, (jlong) value.absolute));
   else
     return (NULL);
 } /* }}} jobject ctoj_value_to_number */
@@ -608,7 +612,7 @@ static jobject ctoj_data_set (JNIEnv *jvm_env, const data_set_t *ds) /* {{{ */
 
   /* Search for the `DataSet (String type)' constructor. */
   m_constructor = (*jvm_env)->GetMethodID (jvm_env,
-      c_dataset, "<init>", "(Ljava.lang.String;)V");
+      c_dataset, "<init>", "(Ljava/lang/String;)V");
   if (m_constructor == NULL)
   {
     ERROR ("java plugin: ctoj_data_set: Looking up the "
@@ -1042,21 +1046,7 @@ static int jtoc_value (JNIEnv *jvm_env, /* {{{ */
 
   class_ptr = (*jvm_env)->GetObjectClass (jvm_env, object_ptr);
 
-  if (ds_type == DS_TYPE_COUNTER)
-  {
-    jlong tmp_long;
-
-    status = jtoc_long (jvm_env, &tmp_long,
-        class_ptr, object_ptr, "longValue");
-    if (status != 0)
-    {
-      ERROR ("java plugin: jtoc_value: "
-          "jtoc_long failed.");
-      return (-1);
-    }
-    (*ret_value).counter = (counter_t) tmp_long;
-  }
-  else
+  if (ds_type == DS_TYPE_GAUGE)
   {
     jdouble tmp_double;
 
@@ -1069,6 +1059,26 @@ static int jtoc_value (JNIEnv *jvm_env, /* {{{ */
       return (-1);
     }
     (*ret_value).gauge = (gauge_t) tmp_double;
+  }
+  else
+  {
+    jlong tmp_long;
+
+    status = jtoc_long (jvm_env, &tmp_long,
+        class_ptr, object_ptr, "longValue");
+    if (status != 0)
+    {
+      ERROR ("java plugin: jtoc_value: "
+          "jtoc_long failed.");
+      return (-1);
+    }
+
+    if (ds_type == DS_TYPE_DERIVE)
+      (*ret_value).derive = (derive_t) tmp_long;
+    else if (ds_type == DS_TYPE_ABSOLUTE)
+      (*ret_value).absolute = (absolute_t) tmp_long;
+    else
+      (*ret_value).counter = (counter_t) tmp_long;
   }
 
   return (0);
@@ -2178,6 +2188,15 @@ static int cjni_config_load_plugin (oconfig_item_t *ci) /* {{{ */
   }
   class->class = NULL;
   class->object = NULL;
+
+  { /* Replace all dots ('.') with slashes ('/'). Dots are usually used
+       thorough the Java community, but (Sun's) `FindClass' and friends need
+       slashes. */
+    size_t i;
+    for (i = 0; class->name[i] != 0; i++)
+      if (class->name[i] == '.')
+        class->name[i] = '/';
+  }
 
   DEBUG ("java plugin: Loading class %s", class->name);
 
