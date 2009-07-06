@@ -37,7 +37,7 @@ static char *host = NULL;
 static int   port;
 static char  port_str[6];
 
-static int tt_config (const char *key, const char *value) 
+static int tt_config (const char *key, const char *value)
 {
 	if (strcasecmp ("Host", key) == 0)
 	{
@@ -53,7 +53,7 @@ static int tt_config (const char *key, const char *value)
 			ERROR ("tokyotyrant plugin: error: Port %s out of range", value);
 			return (-1);
 		}
-                ssnprintf(port_str, 6, "%i", port);
+                ssnprintf(port_str, 5, "%i", port);
 	}
 	else
 	{
@@ -64,10 +64,10 @@ static int tt_config (const char *key, const char *value)
 	return (0);
 }
 
-static void printerr(TCRDB *rdb) 
+static void printerr(TCRDB *rdb)
 {
 	int ecode = tcrdbecode(rdb);
-	ERROR ("tokyotyrant plugin: error: %d, %s", 
+	ERROR ("tokyotyrant plugin: error: %d, %s",
 			ecode, tcrdberrmsg(ecode));
 }
 
@@ -83,7 +83,7 @@ static void tt_submit (gauge_t val, const char* type)
 
 	sstrncpy (vl.host, host, sizeof (vl.host));
 	sstrncpy (vl.plugin, "tokyotyrant", sizeof (vl.plugin));
-	sstrncpy (vl.plugin_instance, port_str, 
+	sstrncpy (vl.plugin_instance, port_str,
 			sizeof (vl.plugin_instance));
 	sstrncpy (vl.type, type, sizeof (vl.type));
 
@@ -119,7 +119,7 @@ static int tt_read (void) {
 
 void module_register (void)
 {
-	plugin_register_config("tokyotyrant", tt_config, 
+	plugin_register_config("tokyotyrant", tt_config,
 			config_keys, config_keys_num);
 	plugin_register_read("tokyotyrant", tt_read);
 }
