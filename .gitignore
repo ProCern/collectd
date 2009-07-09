@@ -41,6 +41,7 @@ src/.libs
 src/*.la
 src/*.lo
 src/*.o
+src/**/*.o
 src/collectd
 src/collectd-nagios
 src/collectdmon
@@ -79,3 +80,7 @@ bindings/perl/pm_to_blib
 # make dist stuff:
 collectd-*.tar.gz
 collectd-*.tar.bz2
+
+# java stuff
+bindings/java/java-build-stamp
+bindings/java/org/collectd/api/*.class
