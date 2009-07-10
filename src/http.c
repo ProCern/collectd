@@ -53,7 +53,6 @@ char curl_errbuf[CURL_ERROR_SIZE];
 
 #define SEND_BUFFER_SIZE 4096
 static char   send_buffer[SEND_BUFFER_SIZE];
-static char  *send_buffer_ptr;
 static int    send_buffer_fill;
 
 static pthread_mutex_t  send_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -108,7 +107,7 @@ static int http_value_list_to_string (char *buffer, int buffer_len, /* {{{ */
                 const data_set_t *ds, const value_list_t *vl)
 {
         int offset = 0;
-        int status;
+        int status = 0;
         int i;
         gauge_t *rates = NULL;
 
@@ -243,7 +242,6 @@ static int http_config (const char *key, const char *value) /* {{{ */
 static void http_init_buffer (void)  /* {{{ */
 {
         memset (send_buffer, 0, sizeof (send_buffer));
-        send_buffer_ptr = send_buffer;
         send_buffer_fill = 0;
 } /* }}} http_init_buffer */
 
@@ -251,7 +249,7 @@ static int http_send_buffer (char *buffer) /* {{{ */
 {
         int status = 0;
         curl_easy_setopt (curl, CURLOPT_POSTFIELDS, buffer);
-        //status = curl_easy_perform (curl);
+        status = curl_easy_perform (curl);
         if (status != 0)
         {
                 ERROR ("http plugin: curl_easy_perform failed with staus %i: %s",
