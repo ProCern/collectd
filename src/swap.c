@@ -64,7 +64,7 @@
 /* #endif KERNEL_LINUX */
 
 #elif HAVE_LIBKSTAT
-static unsigned long long pagesize;
+static derive_t pagesize;
 static kstat_t *ksp;
 /* #endif HAVE_LIBKSTAT */
 
@@ -97,7 +97,7 @@ static int swap_init (void)
 
 #elif HAVE_LIBKSTAT
 	/* getpagesize(3C) tells me this does not fail.. */
-	pagesize = (unsigned long long) getpagesize ();
+	pagesize = (derive_t) getpagesize ();
 	if (get_kstat (&ksp, "unix", 0, "system_pages"))
 		ksp = NULL;
 /* #endif HAVE_LIBKSTAT */
@@ -138,18 +138,30 @@ static int swap_init (void)
 	return (0);
 }
 
-static void swap_submit (const char *type_instance, double value)
+static void swap_submit (const char *type_instance, derive_t value, unsigned type)
 {
 	value_t values[1];
 	value_list_t vl = VALUE_LIST_INIT;
 
-	values[0].gauge = value;
+	switch (type)
+	{
+		case DS_TYPE_GAUGE:
+			values[0].gauge = (gauge_t) value;
+			sstrncpy (vl.type, "swap", sizeof (vl.type));
+			break;
+		case DS_TYPE_DERIVE:
+			values[0].derive = value;
+			sstrncpy (vl.type, "swap_io", sizeof (vl.type));
+			break;
+		default:
+			ERROR ("swap plugin: swap_submit called with wrong"
+				" type");
+	}
 
 	vl.values = values;
 	vl.values_len = 1;
 	sstrncpy (vl.host, hostname_g, sizeof (vl.host));
 	sstrncpy (vl.plugin, "swap", sizeof (vl.plugin));
-	sstrncpy (vl.type, "swap", sizeof (vl.type));
 	sstrncpy (vl.type_instance, type_instance, sizeof (vl.type_instance));
 
 	plugin_dispatch_values (&vl);
@@ -164,10 +176,12 @@ static int swap_read (void)
 	char *fields[8];
 	int numfields;
 
-	unsigned long long swap_used   = 0LL;
-	unsigned long long swap_cached = 0LL;
-	unsigned long long swap_free   = 0LL;
-	unsigned long long swap_total  = 0LL;
+	derive_t swap_used   = 0;
+	derive_t swap_cached = 0;
+	derive_t swap_free   = 0;
+	derive_t swap_total  = 0;
+	derive_t swap_in     = 0;
+	derive_t swap_out    = 0;
 
 	if ((fh = fopen ("/proc/meminfo", "r")) == NULL)
 	{
@@ -179,7 +193,7 @@ static int swap_read (void)
 
 	while (fgets (buffer, 1024, fh) != NULL)
 	{
-		unsigned long long *val = NULL;
+		derive_t *val = NULL;
 
 		if (strncasecmp (buffer, "SwapTotal:", 10) == 0)
 			val = &swap_total;
@@ -195,7 +209,7 @@ static int swap_read (void)
 		if (numfields < 2)
 			continue;
 
-		*val = atoll (fields[1]) * 1024LL;
+		*val = (derive_t) atoll (fields[1]) * 1024LL;
 	}
 
 	if (fclose (fh))
@@ -210,15 +224,52 @@ static int swap_read (void)
 
 	swap_used = swap_total - (swap_free + swap_cached);
 
-	swap_submit ("used", swap_used);
-	swap_submit ("free", swap_free);
-	swap_submit ("cached", swap_cached);
+	if ((fh = fopen ("/proc/vmstat", "r")) == NULL)
+	{
+		char errbuf[1024];
+		WARNING ("swap: fopen: %s",
+				sstrerror (errno, errbuf, sizeof (errbuf)));
+		return (-1);
+	}
+
+	while (fgets (buffer, 1024, fh) != NULL)
+	{
+		derive_t *val = NULL;
+
+		if (strncasecmp (buffer, "pswpin", 6) == 0)
+			val = &swap_in;
+		else if (strncasecmp (buffer, "pswpout", 7) == 0)
+			val = &swap_out;
+		else
+			continue;
+
+		numfields = strsplit (buffer, fields, 8);
+
+		if (numfields < 2)
+			continue;
+
+		*val = (derive_t) atoll (fields[1]);
+	}
+
+	if (fclose (fh))
+	{
+		char errbuf[1024];
+		WARNING ("swap: fclose: %s",
+				sstrerror (errno, errbuf, sizeof (errbuf)));
+	}
+
+	swap_submit ("used", swap_used, DS_TYPE_GAUGE);
+	swap_submit ("free", swap_free, DS_TYPE_GAUGE);
+	swap_submit ("cached", swap_cached, DS_TYPE_GAUGE);
+	swap_submit ("in", swap_in, DS_TYPE_DERIVE);
+	swap_submit ("out", swap_out, DS_TYPE_DERIVE);
+
 /* #endif KERNEL_LINUX */
 
 #elif HAVE_LIBKSTAT
-	unsigned long long swap_alloc;
-	unsigned long long swap_resv;
-	unsigned long long swap_avail;
+	derive_t swap_alloc;
+	derive_t swap_resv;
+	derive_t swap_avail;
 
 	struct anoninfo ai;
 
@@ -251,16 +302,14 @@ static int swap_read (void)
 	 * swap_alloc = pagesize * ( ai.ani_max - ai.ani_free );
 	 * can suffer from a 32bit overflow.
 	 */
-	swap_alloc  = ai.ani_max - ai.ani_free;
-	swap_alloc *= pagesize;
-	swap_resv   = ai.ani_resv + ai.ani_free - ai.ani_max;
-	swap_resv  *= pagesize;
-	swap_avail  = ai.ani_max - ai.ani_resv;
-	swap_avail *= pagesize;
+	swap_alloc  = (derive_t) ((ai.ani_max - ai.ani_free) * pagesize);
+	swap_resv   = (derive_t) ((ai.ani_resv + ai.ani_free - ai.ani_max)
+			* pagesize);
+	swap_avail  = (derive_t) ((ai.ani_max - ai.ani_resv) * pagesize);
 
-	swap_submit ("used", swap_alloc);
-	swap_submit ("free", swap_avail);
-	swap_submit ("reserved", swap_resv);
+	swap_submit ("used", swap_alloc, DS_TYPE_GAUGE);
+	swap_submit ("free", swap_avail, DS_TYPE_GAUGE);
+	swap_submit ("reserved", swap_resv, DS_TYPE_GAUGE);
 /* #endif HAVE_LIBKSTAT */
 
 #elif HAVE_SWAPCTL
@@ -269,8 +318,8 @@ static int swap_read (void)
 	int status;
 	int i;
 
-	uint64_t used  = 0;
-	uint64_t total = 0;
+	derive_t used  = 0;
+	derive_t total = 0;
 
 	/*
 	 * XXX: This is the syntax for the *BSD `swapctl', which has the
@@ -311,9 +360,9 @@ static int swap_read (void)
 	}
 
 #if defined(DEV_BSIZE) && (DEV_BSIZE > 0)
-# define C_SWAP_BLOCK_SIZE ((uint64_t) DEV_BSIZE)
+# define C_SWAP_BLOCK_SIZE ((derive_t) DEV_BSIZE)
 #else
-# define C_SWAP_BLOCK_SIZE ((uint64_t) 512)
+# define C_SWAP_BLOCK_SIZE ((derive_t) 512)
 #endif
 
 	for (i = 0; i < swap_num; i++)
@@ -321,9 +370,9 @@ static int swap_read (void)
 		if ((swap_entries[i].se_flags & SWF_ENABLE) == 0)
 			continue;
 
-		used  += ((uint64_t) swap_entries[i].se_inuse)
+		used  += ((derive_t) swap_entries[i].se_inuse)
 			* C_SWAP_BLOCK_SIZE;
-		total += ((uint64_t) swap_entries[i].se_nblks)
+		total += ((derive_t) swap_entries[i].se_nblks)
 			* C_SWAP_BLOCK_SIZE;
 	}
 
@@ -335,8 +384,8 @@ static int swap_read (void)
 		return (-1);
 	}
 
-	swap_submit ("used", (gauge_t) used);
-	swap_submit ("free", (gauge_t) (total - used));
+	swap_submit ("used", used, DS_TYPE_GAUGE);
+	swap_submit ("free", total - used, DS_TYPE_GAUGE);
 
 	sfree (swap_entries);
 /* #endif HAVE_SWAPCTL */
@@ -357,17 +406,17 @@ static int swap_read (void)
 		return (-1);
 
 	/* The returned values are bytes. */
-	swap_submit ("used", sw_usage.xsu_used);
-	swap_submit ("free", sw_usage.xsu_avail);
+	swap_submit ("used", (derive_t) sw_usage.xsu_used, DS_TYPE_GAUGE);
+	swap_submit ("free", (derive_t) sw_usage.xsu_avail, DS_TYPE_GAUGE);
 /* #endif VM_SWAPUSAGE */
 
 #elif HAVE_LIBKVM_GETSWAPINFO
 	struct kvm_swap data_s;
 	int             status;
 
-	unsigned long long used;
-	unsigned long long free;
-	unsigned long long total;
+	derive_t used;
+	derive_t free;
+	derive_t total;
 
 	if (kvm_obj == NULL)
 		return (-1);
@@ -377,16 +426,16 @@ static int swap_read (void)
 	if (status == -1)
 		return (-1);
 
-	total = (unsigned long long) data_s.ksw_total;
-	used  = (unsigned long long) data_s.ksw_used;
+	total = (derive_t) data_s.ksw_total;
+	used  = (derive_t) data_s.ksw_used;
 
-	total *= (unsigned long long) kvm_pagesize;
-	used  *= (unsigned long long) kvm_pagesize;
+	total *= (derive_t) kvm_pagesize;
+	used  *= (derive_t) kvm_pagesize;
 
 	free = total - used;
 
-	swap_submit ("used", used);
-	swap_submit ("free", free);
+	swap_submit ("used", used, DS_TYPE_GAUGE);
+	swap_submit ("free", free, DS_TYPE_GAUGE);
 /* #endif HAVE_LIBKVM_GETSWAPINFO */
 
 #elif HAVE_LIBSTATGRAB
@@ -397,8 +446,8 @@ static int swap_read (void)
 	if (swap == NULL)
 		return (-1);
 
-	swap_submit ("used", swap->used);
-	swap_submit ("free", swap->free);
+	swap_submit ("used", (derive_t) swap->used, DS_TYPE_GAUGE);
+	swap_submit ("free", (derive_t) swap->free, DS_TYPE_GAUGE);
 #endif /* HAVE_LIBSTATGRAB */
 
 	return (0);

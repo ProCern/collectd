@@ -73,6 +73,7 @@ FQDNLookup   true
 #@BUILD_PLUGIN_FSCACHE_TRUE@LoadPlugin fscache
 #@BUILD_PLUGIN_GMOND_TRUE@LoadPlugin gmond
 #@BUILD_PLUGIN_HDDTEMP_TRUE@LoadPlugin hddtemp
+#@BUILD_PLUGIN_HTTP_TRUE@LoadPlugin http
 @BUILD_PLUGIN_INTERFACE_TRUE@@BUILD_PLUGIN_INTERFACE_TRUE@LoadPlugin interface
 #@BUILD_PLUGIN_IPTABLES_TRUE@LoadPlugin iptables
 #@BUILD_PLUGIN_IPMI_TRUE@LoadPlugin ipmi
@@ -118,6 +119,7 @@ FQDNLookup   true
 #@BUILD_PLUGIN_TEAMSPEAK2_TRUE@LoadPlugin teamspeak2
 #@BUILD_PLUGIN_TED_TRUE@LoadPlugin ted
 #@BUILD_PLUGIN_THERMAL_TRUE@LoadPlugin thermal
+#@BUILD_PLUGIN_TOKYOTYRANT_TRUE@LoadPlugin tokyotyrant
 #@BUILD_PLUGIN_UNIXSOCK_TRUE@LoadPlugin unixsock
 #@BUILD_PLUGIN_UPTIME_TRUE@LoadPlugin uptime
 #@BUILD_PLUGIN_USERS_TRUE@LoadPlugin users
@@ -249,6 +251,7 @@ FQDNLookup   true
 #	MountPoint "/home"
 #	FSType "ext3"
 #	IgnoreSelected false
+#	ReportByDevice false
 #</Plugin>
 
 #<Plugin disk>
@@ -302,11 +305,17 @@ FQDNLookup   true
 #  Port "7634"
 #
 #  #----------------------------------------------------------------#
-#  # `TranslateDevicename' enabled backwards compatibility behavior #
+#  # `TranslateDevicename' enables backwards compatibility behavior #
 #  # and is enabled by default. Setting this option to `false' is   #
 #  # highly recommended.                                            #
 #  #----------------------------------------------------------------#
 #  TranslateDevicename false
+#</Plugin>
+
+#<Plugin http>
+#	URL "http://example.com/collectd-import"
+#	User "www-user"
+#	Password "secret"
 #</Plugin>
 
 #<Plugin interface>
@@ -336,7 +345,7 @@ FQDNLookup   true
 
 #<Plugin "java">
 #	JVMArg "-verbose:jni"
-#	JVMArg "-Djava.class.path=/opt/collectd/lib/collectd/bindings/java"
+#	JVMArg "-Djava.class.path=@prefix@/share/collectd/java"
 #
 #	LoadPlugin "org.collectd.java.Foobar"
 #	<Plugin "org.collectd.java.Foobar">
@@ -608,7 +617,7 @@ FQDNLookup   true
 #       Version 1
 #       Community "community_string"
 #       Collect "std_traffic"
-#       Inverval 120
+#       Interval 120
 #   </Host>
 #   <Host "some.server.mydomain.org">
 #       Address "192.168.0.42"
@@ -683,6 +692,11 @@ FQDNLookup   true
 #	ForceUseProcfs false
 #	Device "THRM"
 #	IgnoreSelected false
+#</Plugin>
+
+#<Plugin tokyotyrant>
+#	Host "localhost"
+#	Port "1978"
 #</Plugin>
 
 #<Plugin unixsock>

@@ -25,6 +25,7 @@
 #include "utils_avltree.h"
 #include "utils_cache.h"
 #include "utils_threshold.h"
+#include "meta_data.h"
 
 #include <assert.h>
 #include <pthread.h>
@@ -45,6 +46,21 @@ typedef struct cache_entry_s
 	 * (for purding old entries) */
 	int interval;
 	int state;
+
+	/*
+	 * +-----+-----+-----+-----+-----+-----+-----+-----+-----+----
+	 * !  0  !  1  !  2  !  3  !  4  !  5  !  6  !  7  !  8  ! ...
+	 * +-----+-----+-----+-----+-----+-----+-----+-----+-----+----
+	 * ! ds0 ! ds1 ! ds2 ! ds0 ! ds1 ! ds2 ! ds0 ! ds1 ! ds2 ! ...
+	 * +-----+-----+-----+-----+-----+-----+-----+-----+-----+----
+	 * !      t = 0      !      t = 1      !      t = 2      ! ...
+	 * +-----------------+-----------------+-----------------+----
+	 */
+	gauge_t *history;
+	size_t   history_index; /* points to the next position to write to. */
+	size_t   history_length;
+
+	meta_data_t *meta;
 } cache_entry_t;
 
 static c_avl_tree_t   *cache_tree = NULL;
@@ -80,6 +96,10 @@ static cache_entry_t *cache_alloc (int values_num)
     return (NULL);
   }
 
+  ce->history = NULL;
+  ce->history_length = 0;
+  ce->meta = NULL;
+
   return (ce);
 } /* cache_entry_t *cache_alloc */
 
@@ -90,6 +110,12 @@ static void cache_free (cache_entry_t *ce)
 
   sfree (ce->values_gauge);
   sfree (ce->values_raw);
+  sfree (ce->history);
+  if (ce->meta != NULL)
+  {
+    meta_data_destroy (ce->meta);
+    ce->meta = NULL;
+  }
   sfree (ce);
 } /* void cache_free */
 
@@ -336,6 +362,7 @@ int uc_check_timeout (void)
     {
       DEBUG ("uc_check_timeout: %s is missing but ``uninteresting''",
 	  keys[i]);
+      ce = NULL;
       status = c_avl_remove (cache_tree, keys[i],
 	  (void *) &key, (void *) &ce);
       if (status != 0)
@@ -344,7 +371,9 @@ int uc_check_timeout (void)
       }
       sfree (keys[i]);
       sfree (key);
-      cache_free (ce);
+      if (ce != NULL)
+        cache_free (ce);
+      continue;
     }
 
     /* If we get here, the value is ``interesting''. Query the record from the
@@ -389,6 +418,10 @@ int uc_check_timeout (void)
 	  keys[i], status);
       sfree (keys[i]);
     }
+
+    /* Make really sure the next iteration doesn't work with this pointer.
+     * There have been too many bugs in the past.. :/  -- octo */
+    ce = NULL;
   } /* for (keys[i]) */
 
   c_avl_iterator_destroy (iter);
@@ -419,7 +452,7 @@ int uc_update (const data_set_t *ds, const value_list_t *vl)
   int status;
   int i;
 
-  if (FORMAT_VL (name, sizeof (name), vl, ds) != 0)
+  if (FORMAT_VL (name, sizeof (name), vl) != 0)
   {
     ERROR ("uc_update: FORMAT_VL failed.");
     return (-1);
@@ -519,6 +552,20 @@ int uc_update (const data_set_t *ds, const value_list_t *vl)
     DEBUG ("uc_update: %s: ds[%i] = %lf", name, i, ce->values_gauge[i]);
   } /* for (i) */
 
+  /* Update the history if it exists. */
+  if (ce->history != NULL)
+  {
+    assert (ce->history_index < ce->history_length);
+    for (i = 0; i < ce->values_num; i++)
+    {
+      size_t hist_idx = (ce->values_num * ce->history_index) + i;
+      ce->history[hist_idx] = ce->values_gauge[i];
+    }
+
+    assert (ce->history_length > 0);
+    ce->history_index = (ce->history_index + 1) % ce->history_length;
+  }
+
   /* Prune invalid gauge data */
   uc_check_range (ds, ce);
 
@@ -566,16 +613,24 @@ int uc_get_rate_by_name (const char *name, gauge_t **ret_values, size_t *ret_val
   {
     assert (ce != NULL);
 
-    ret_num = ce->values_num;
-    ret = (gauge_t *) malloc (ret_num * sizeof (gauge_t));
-    if (ret == NULL)
+    /* remove missing values from getval */
+    if (ce->state == STATE_MISSING)
     {
-      ERROR ("utils_cache: uc_get_rate_by_name: malloc failed.");
       status = -1;
     }
     else
     {
-      memcpy (ret, ce->values_gauge, ret_num * sizeof (gauge_t));
+      ret_num = ce->values_num;
+      ret = (gauge_t *) malloc (ret_num * sizeof (gauge_t));
+      if (ret == NULL)
+      {
+        ERROR ("utils_cache: uc_get_rate_by_name: malloc failed.");
+        status = -1;
+      }
+      else
+      {
+        memcpy (ret, ce->values_gauge, ret_num * sizeof (gauge_t));
+      }
     }
   }
   else
@@ -602,7 +657,7 @@ gauge_t *uc_get_rate (const data_set_t *ds, const value_list_t *vl)
   size_t ret_num = 0;
   int status;
 
-  if (FORMAT_VL (name, sizeof (name), vl, ds) != 0)
+  if (FORMAT_VL (name, sizeof (name), vl) != 0)
   {
     ERROR ("utils_cache: uc_get_rate: FORMAT_VL failed.");
     return (NULL);
@@ -647,6 +702,10 @@ int uc_get_names (char ***ret_names, time_t **ret_times, size_t *ret_number)
   while (c_avl_iterator_next (iter, (void *) &key, (void *) &value) == 0)
   {
     char **temp;
+
+    /* remove missing values when list values */
+    if (value->state == STATE_MISSING)
+      continue;
 
     if (ret_times != NULL)
     {
@@ -708,7 +767,7 @@ int uc_get_state (const data_set_t *ds, const value_list_t *vl)
   cache_entry_t *ce = NULL;
   int ret = STATE_ERROR;
 
-  if (FORMAT_VL (name, sizeof (name), vl, ds) != 0)
+  if (FORMAT_VL (name, sizeof (name), vl) != 0)
   {
     ERROR ("uc_get_state: FORMAT_VL failed.");
     return (STATE_ERROR);
@@ -733,7 +792,7 @@ int uc_set_state (const data_set_t *ds, const value_list_t *vl, int state)
   cache_entry_t *ce = NULL;
   int ret = -1;
 
-  if (FORMAT_VL (name, sizeof (name), vl, ds) != 0)
+  if (FORMAT_VL (name, sizeof (name), vl) != 0)
   {
     ERROR ("uc_get_state: FORMAT_VL failed.");
     return (STATE_ERROR);
@@ -752,4 +811,193 @@ int uc_set_state (const data_set_t *ds, const value_list_t *vl, int state)
 
   return (ret);
 } /* int uc_set_state */
+
+int uc_get_history_by_name (const char *name,
+    gauge_t *ret_history, size_t num_steps, size_t num_ds)
+{
+  cache_entry_t *ce = NULL;
+  size_t i;
+  int status = 0;
+
+  pthread_mutex_lock (&cache_lock);
+
+  status = c_avl_get (cache_tree, name, (void *) &ce);
+  if (status != 0)
+  {
+    pthread_mutex_unlock (&cache_lock);
+    return (-ENOENT);
+  }
+
+  if (((size_t) ce->values_num) != num_ds)
+  {
+    pthread_mutex_unlock (&cache_lock);
+    return (-EINVAL);
+  }
+
+  /* Check if there are enough values available. If not, increase the buffer
+   * size. */
+  if (ce->history_length < num_steps)
+  {
+    gauge_t *tmp;
+    size_t i;
+
+    tmp = realloc (ce->history, sizeof (*ce->history)
+	* num_steps * ce->values_num);
+    if (tmp == NULL)
+    {
+      pthread_mutex_unlock (&cache_lock);
+      return (-ENOMEM);
+    }
+
+    for (i = ce->history_length * ce->values_num;
+	i < (num_steps * ce->values_num);
+	i++)
+      tmp[i] = NAN;
+
+    ce->history = tmp;
+    ce->history_length = num_steps;
+  } /* if (ce->history_length < num_steps) */
+
+  /* Copy the values to the output buffer. */
+  for (i = 0; i < num_steps; i++)
+  {
+    size_t src_index;
+    size_t dst_index;
+
+    if (i < ce->history_index)
+      src_index = ce->history_index - (i + 1);
+    else
+      src_index = ce->history_length + ce->history_index - (i + 1);
+    src_index = src_index * num_ds;
+
+    dst_index = i * num_ds;
+
+    memcpy (ret_history + dst_index, ce->history + src_index,
+	sizeof (*ret_history) * num_ds);
+  }
+
+  pthread_mutex_unlock (&cache_lock);
+
+  return (0);
+} /* int uc_get_history_by_name */
+
+int uc_get_history (const data_set_t *ds, const value_list_t *vl,
+    gauge_t *ret_history, size_t num_steps, size_t num_ds)
+{
+  char name[6 * DATA_MAX_NAME_LEN];
+
+  if (FORMAT_VL (name, sizeof (name), vl) != 0)
+  {
+    ERROR ("utils_cache: uc_get_history: FORMAT_VL failed.");
+    return (-1);
+  }
+
+  return (uc_get_history_by_name (name, ret_history, num_steps, num_ds));
+} /* int uc_get_history */
+
+/*
+ * Meta data interface
+ */
+/* XXX: This function will acquire `cache_lock' but will not free it! */
+static meta_data_t *uc_get_meta (const value_list_t *vl) /* {{{ */
+{
+  char name[6 * DATA_MAX_NAME_LEN];
+  cache_entry_t *ce = NULL;
+  int status;
+
+  status = FORMAT_VL (name, sizeof (name), vl);
+  if (status != 0)
+  {
+    ERROR ("utils_cache: uc_get_meta: FORMAT_VL failed.");
+    return (NULL);
+  }
+
+  pthread_mutex_lock (&cache_lock);
+
+  status = c_avl_get (cache_tree, name, (void *) &ce);
+  if (status != 0)
+  {
+    pthread_mutex_unlock (&cache_lock);
+    return (NULL);
+  }
+  assert (ce != NULL);
+
+  if (ce->meta == NULL)
+    ce->meta = meta_data_create ();
+
+  return (ce->meta);
+} /* }}} meta_data_t *uc_get_meta */
+
+/* Sorry about this preprocessor magic, but it really makes this file much
+ * shorter.. */
+#define UC_WRAP(wrap_function) { \
+  meta_data_t *meta; \
+  int status; \
+  meta = uc_get_meta (vl); \
+  if (meta == NULL) return (-1); \
+  status = wrap_function (meta, key); \
+  pthread_mutex_unlock (&cache_lock); \
+  return (status); \
+}
+int uc_meta_data_exists (const value_list_t *vl, const char *key)
+  UC_WRAP (meta_data_exists)
+
+int uc_meta_data_delete (const value_list_t *vl, const char *key)
+  UC_WRAP (meta_data_delete)
+#undef UC_WRAP
+
+/* We need a new version of this macro because the following functions take
+ * two argumetns. */
+#define UC_WRAP(wrap_function) { \
+  meta_data_t *meta; \
+  int status; \
+  meta = uc_get_meta (vl); \
+  if (meta == NULL) return (-1); \
+  status = wrap_function (meta, key, value); \
+  pthread_mutex_unlock (&cache_lock); \
+  return (status); \
+}
+int uc_meta_data_add_string (const value_list_t *vl,
+    const char *key,
+    const char *value)
+  UC_WRAP(meta_data_add_string)
+int uc_meta_data_add_signed_int (const value_list_t *vl,
+    const char *key,
+    int64_t value)
+  UC_WRAP(meta_data_add_signed_int)
+int uc_meta_data_add_unsigned_int (const value_list_t *vl,
+    const char *key,
+    uint64_t value)
+  UC_WRAP(meta_data_add_unsigned_int)
+int uc_meta_data_add_double (const value_list_t *vl,
+    const char *key,
+    double value)
+  UC_WRAP(meta_data_add_double)
+int uc_meta_data_add_boolean (const value_list_t *vl,
+    const char *key,
+    _Bool value)
+  UC_WRAP(meta_data_add_boolean)
+
+int uc_meta_data_get_string (const value_list_t *vl,
+    const char *key,
+    char **value)
+  UC_WRAP(meta_data_get_string)
+int uc_meta_data_get_signed_int (const value_list_t *vl,
+    const char *key,
+    int64_t *value)
+  UC_WRAP(meta_data_get_signed_int)
+int uc_meta_data_get_unsigned_int (const value_list_t *vl,
+    const char *key,
+    uint64_t *value)
+  UC_WRAP(meta_data_get_unsigned_int)
+int uc_meta_data_get_double (const value_list_t *vl,
+    const char *key,
+    double *value)
+  UC_WRAP(meta_data_get_double)
+int uc_meta_data_get_boolean (const value_list_t *vl,
+    const char *key,
+    _Bool *value)
+  UC_WRAP(meta_data_get_boolean)
+#undef UC_WRAP
+
 /* vim: set sw=2 ts=8 sts=2 tw=78 : */

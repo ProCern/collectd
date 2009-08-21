@@ -103,6 +103,14 @@ Oleg King <king2 at kaluga.ru>
    + the disk plugin, and
    + the users plugin.
 
+Ondrej Zajicek <santiago at crfreenet.org>
+ - madwifi plugin.
+
+Paul Sadauskas <psadauskas at gmail.com>
+ - tokyotyrant plugin.
+ - `ReportByDevice' option of the df plugin.
+ - http plugin.
+
 Peter Holik <peter at holik.at>
  - cpufreq plugin.
  - multimeter plugin.

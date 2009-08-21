@@ -1,6 +1,7 @@
 /**
  * collectd - src/df.c
  * Copyright (C) 2005-2007  Florian octo Forster
+ * Copyright (C) 2009       Paul Sadauskas
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -17,6 +18,7 @@
  *
  * Authors:
  *   Florian octo Forster <octo at verplant.org>
+ *   Paul Sadauskas <psadauskas at gmail.com>
  **/
 
 #include "collectd.h"
@@ -48,13 +50,15 @@ static const char *config_keys[] =
 	"MountPoint",
 	"FSType",
 	"IgnoreSelected",
-	NULL
+        "ReportByDevice"
 };
-static int config_keys_num = 4;
+static int config_keys_num = STATIC_ARRAY_SIZE (config_keys);
 
 static ignorelist_t *il_device = NULL;
 static ignorelist_t *il_mountpoint = NULL;
 static ignorelist_t *il_fstype = NULL;
+
+static _Bool by_device = false;
 
 static int df_init (void)
 {
@@ -92,9 +96,7 @@ static int df_config (const char *key, const char *value)
 	}
 	else if (strcasecmp (key, "IgnoreSelected") == 0)
 	{
-		if ((strcasecmp (value, "True") == 0)
-				|| (strcasecmp (value, "Yes") == 0)
-				|| (strcasecmp (value, "On") == 0))
+		if (IS_TRUE (value))
 		{
 			ignorelist_set_invert (il_device, 0);
 			ignorelist_set_invert (il_mountpoint, 0);
@@ -106,6 +108,13 @@ static int df_config (const char *key, const char *value)
 			ignorelist_set_invert (il_mountpoint, 1);
 			ignorelist_set_invert (il_fstype, 1);
 		}
+		return (0);
+	}
+	else if (strcasecmp (key, "ReportByDevice") == 0)
+	{
+		if (IS_TRUE (value))
+			by_device = true;
+
 		return (0);
 	}
 
@@ -147,7 +156,7 @@ static int df_read (void)
 	unsigned long long blocksize;
 	gauge_t df_free;
 	gauge_t df_used;
-	char mnt_name[256];
+	char disk_name[256];
 
 	mnt_list = NULL;
 	if (cu_mount_getlist (&mnt_list) == NULL)
@@ -171,20 +180,37 @@ static int df_read (void)
 		df_free = statbuf.f_bfree * blocksize;
 		df_used = (statbuf.f_blocks - statbuf.f_bfree) * blocksize;
 
-		if (strcmp (mnt_ptr->dir, "/") == 0)
+		if (by_device) 
 		{
-			sstrncpy (mnt_name, "root", sizeof (mnt_name));
-		}
-		else
+			/* eg, /dev/hda1  -- strip off the "/dev/" */
+			if (strncmp (mnt_ptr->spec_device, "/dev/", strlen ("/dev/")) == 0)
+				sstrncpy (disk_name, mnt_ptr->spec_device + strlen ("/dev/"), sizeof (disk_name));
+			else
+				sstrncpy (disk_name, mnt_ptr->spec_device, sizeof (disk_name));
+
+			if (strlen(disk_name) < 1) 
+			{
+				DEBUG("df: no device name name for mountpoint %s, skipping", mnt_ptr->dir);
+				continue;
+			}
+		} 
+		else 
 		{
-			int i, len;
+			if (strcmp (mnt_ptr->dir, "/") == 0)
+			{
+				sstrncpy (disk_name, "root", sizeof (disk_name));
+			}
+			else
+			{
+				int i, len;
 
-			sstrncpy (mnt_name, mnt_ptr->dir + 1, sizeof (mnt_name));
-			len = strlen (mnt_name);
+				sstrncpy (disk_name, mnt_ptr->dir + 1, sizeof (disk_name));
+				len = strlen (disk_name);
 
-			for (i = 0; i < len; i++)
-				if (mnt_name[i] == '/')
-					mnt_name[i] = '-';
+				for (i = 0; i < len; i++)
+					if (disk_name[i] == '/')
+						disk_name[i] = '-';
+			}
 		}
 
 		if (ignorelist_match (il_device,
@@ -197,7 +223,7 @@ static int df_read (void)
 		if (ignorelist_match (il_fstype, mnt_ptr->type))
 			continue;
 
-		df_submit (mnt_name, df_used, df_free);
+		df_submit (disk_name, df_used, df_free);
 	}
 
 	cu_mount_freelist (mnt_list);

@@ -870,6 +870,12 @@ match any one of the criteria are collected. By default only selected
 partitions are collected if a selection is made. If no selection is configured
 at all, B<all> partitions are selected.
 
+=item B<ReportByDevice> I<true>|I<false>
+
+Report using the device name rather than the mountpoint. i.e. with this I<false>,
+(the default), it will report a disk as "root", but with it I<true>, it will be
+"sda1" (or whichever).
+
 =back
 
 =head2 Plugin C<disk>
@@ -1175,6 +1181,29 @@ If enabled, translate the disk names to major/minor device numbers
 (e.E<nbsp>g. "8-0" for /dev/sda). For backwards compatibility this defaults to
 I<true> but it's recommended to disable it as it will probably be removed in
 the next major version.
+
+=back
+
+=head2 Plugin C<http>
+
+This output plugin submits values to an http server by POST them using the
+PUTVAL plain-text protocol.
+
+The following options are accepted by the C<http>-plugin:
+
+=over 4
+
+=item B<URL> I<http://example.com/collectd-import>
+
+Set the URL location where values will be sent.
+
+=item B<User> I<Username>
+
+Optional user name needed for authentication.
+
+=item B<Password> I<Password>
+
+Optional password needed for authentication.
 
 =back
 
@@ -1825,6 +1854,11 @@ Set the time-to-live of sent packets. This applies to all, unicast and
 multicast, and IPv4 and IPv6 packets. The default is to not change this value.
 That means that multicast packets will be sent with a TTL of C<1> (one) on most
 operating systems.
+
+=item B<MaxPacketSize> I<1024-65535>
+
+Set the maximum size for datagrams received over the network. Packets larger
+than this will be truncated.
 
 =item B<Forward> I<true|false>
 
@@ -2779,7 +2813,7 @@ matching values will be ignored.
 
 =head2 Plugin C<rrdcached>
 
-The C<rrdcached> plugin uses the RRDTool accelerator daemon, L<rrdcached(1)>,
+The C<rrdcached> plugin uses the RRDtool accelerator daemon, L<rrdcached(1)>,
 to store values to RRD files in an efficient manner. The combination of the
 C<rrdcached> B<plugin> and the C<rrdcached> B<daemon> is very similar to the
 way the C<rrdtool> plugin works (see below). The added abstraction layer
@@ -2831,7 +2865,7 @@ expected. Default is B<true>.
 
 You can use the settings B<StepSize>, B<HeartBeat>, B<RRARows>, and B<XFF> to
 fine-tune your RRD-files. Please read L<rrdcreate(1)> if you encounter problems
-using these settings. If you don't want to dive into the depths of RRDTool, you
+using these settings. If you don't want to dive into the depths of RRDtool, you
 can safely ignore these settings.
 
 =over 4
@@ -2927,6 +2961,14 @@ updates per second, writing all values to disk will take approximately
 56E<nbsp>minutes. Together with the flushing ability that's integrated into
 "collection3" you'll end up with a responsive and fast system, up to date
 graphs and basically a "backup" of your values every hour.
+
+=item B<RandomTimeout> I<Seconds>
+
+When set, the actual timeout for each value is chosen randomly between
+I<CacheTimeout>-I<RandomTimeout> and I<CacheTimeout>+I<RandomTimeout>. The
+intention is to avoid high load situations that appear when many values timeout
+at the same time. This is especially a problem shortly after the daemon starts,
+because all values were added to the internal cache at roughly the same time.
 
 =back
 
@@ -3313,6 +3355,26 @@ Invert the selection: If set to true, all devices B<except> the ones that
 match the device names specified by the B<Device> option are collected. By
 default only selected devices are collected if a selection is made. If no
 selection is configured at all, B<all> devices are selected.
+
+=back
+
+=head2 Plugin C<tokyotyrant>
+
+The C<tokyotyrant plugin> connects to a TokyoTyrant server and collects a 
+couple metrics: number of records, and database size on disk.
+
+=over 4
+
+=item B<Host> I<Hostname/IP>
+
+The hostname or ip which identifies the server.
+Default: B<127.0.0.1>
+
+=item B<Port> I<Service/Port>
+
+The query port of the server. This needs to be a string, even if the port is
+given in its numeric form.
+Default: B<1978>
 
 =back
 
@@ -4036,6 +4098,19 @@ Example:
    Invert true
    Satisfy "Any"
  </Match>
+
+=item B<empty_counter>
+
+Matches all values with one or more data sources of type B<COUNTER> and where
+all counter values are zero. These counters usually I<never> increased since
+they started existing (and are therefore uninteresting), or got reset recently
+or overflowed and you had really, I<really> bad luck.
+
+Please keep in mind that ignoring such counters can result in confusing
+behavior: Counters which hardly ever increase will be zero for long periods of
+time. If the counter is reset for some reason (machine or service restarted,
+usually), the graph will be empty (NAN) for a long time. People may not
+understand why.
 
 =back
 

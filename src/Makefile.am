@@ -467,6 +467,22 @@ collectd_LDADD += "-dlopen" logfile.la
 collectd_DEPENDENCIES += logfile.la
 endif
 
+if BUILD_PLUGIN_MADWIFI
+pkglib_LTLIBRARIES += madwifi.la
+madwifi_la_SOURCES = madwifi.c madwifi.h
+madwifi_la_LDFLAGS = -module -avoid-version
+collectd_LDADD += "-dlopen" madwifi.la
+collectd_DEPENDENCIES += madwifi.la
+endif
+
+if BUILD_PLUGIN_MATCH_EMPTY_COUNTER
+pkglib_LTLIBRARIES += match_empty_counter.la
+match_empty_counter_la_SOURCES = match_empty_counter.c
+match_empty_counter_la_LDFLAGS = -module -avoid-version
+collectd_LDADD += "-dlopen" match_empty_counter.la
+collectd_DEPENDENCIES += match_empty_counter.la
+endif
+
 if BUILD_PLUGIN_MATCH_REGEX
 pkglib_LTLIBRARIES += match_regex.la
 match_regex_la_SOURCES = match_regex.c
@@ -952,6 +968,19 @@ collectd_LDADD += "-dlopen" thermal.la
 collectd_DEPENDENCIES += thermal.la
 endif
 
+if BUILD_PLUGIN_TOKYOTYRANT
+pkglib_LTLIBRARIES += tokyotyrant.la
+tokyotyrant_la_SOURCES = tokyotyrant.c
+tokyotyrant_la_CPPFLAGS  = $(AM_CPPFLAGS) $(BUILD_WITH_LIBTOKYOTYRANT_CPPFLAGS)
+tokyotyrant_la_LDFLAGS = -module -avoid-version $(BUILD_WITH_LIBTOKYOTYRANT_LDFLAGS)
+tokyotyrant_la_LIBADD  = $(BUILD_WITH_LIBTOKYOTYRANT_LIBS)
+if BUILD_WITH_LIBSOCKET
+tokyotyrant_la_LIBADD += -lsocket
+endif
+collectd_LDADD += "-dlopen" tokyotyrant.la
+collectd_DEPENDENCIES += tokyotyrant.la
+endif
+
 if BUILD_PLUGIN_UNIXSOCK
 pkglib_LTLIBRARIES += unixsock.la
 unixsock_la_SOURCES = unixsock.c \
@@ -1025,6 +1054,20 @@ wireless_la_SOURCES = wireless.c
 wireless_la_LDFLAGS = -module -avoid-version
 collectd_LDADD += "-dlopen" wireless.la
 collectd_DEPENDENCIES += wireless.la
+endif
+
+if BUILD_PLUGIN_WRITE_CURL
+pkglib_LTLIBRARIES += write_curl.la
+write_curl_la_SOURCES = write_curl.c
+write_curl_la_LDFLAGS = -module -avoid-version
+write_curl_la_CFLAGS = $(AM_CFLAGS)
+write_curl_la_LIBADD =
+collectd_LDADD += "-dlopen" write_curl.la
+if BUILD_WITH_LIBCURL
+write_curl_la_CFLAGS += $(BUILD_WITH_LIBCURL_CFLAGS)
+write_curl_la_LIBADD += $(BUILD_WITH_LIBCURL_LIBS)
+endif
+collectd_DEPENDENCIES += write_curl.la
 endif
 
 if BUILD_PLUGIN_XMMS
