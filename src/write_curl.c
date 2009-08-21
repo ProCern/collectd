@@ -1,5 +1,5 @@
 /**
- * collectd - src/http.c
+ * collectd - src/write_curl.c
  * Copyright (C) 2009       Paul Sadauskas
  * Copyright (C) 2007-2009  Florian octo Forster
  * Copyright (C) 2009       Doug MacEachern
@@ -61,15 +61,15 @@ static time_t send_buffer_init_time;
 
 static pthread_mutex_t  send_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static void http_init_buffer (void)  /* {{{ */
+static void wc_init_buffer (void)  /* {{{ */
 {
         memset (send_buffer, 0, sizeof (send_buffer));
         send_buffer_free = sizeof (send_buffer);
         send_buffer_fill = 0;
         send_buffer_init_time = time (NULL);
-} /* }}} http_init_buffer */
+} /* }}} wc_init_buffer */
 
-static int http_init(void) /* {{{ */
+static int wc_init(void) /* {{{ */
 {
 
         curl = curl_easy_init ();
@@ -112,12 +112,12 @@ static int http_init(void) /* {{{ */
                 curl_easy_setopt (curl, CURLOPT_HTTPAUTH, CURLAUTH_DIGEST);
         }
 
-        http_init_buffer ();
+        wc_init_buffer ();
 
         return (0);
 } /* }}} */
 
-static int http_value_list_to_string (char *buffer, /* {{{ */
+static int wc_value_list_to_string (char *buffer, /* {{{ */
                 size_t buffer_size,
                 const data_set_t *ds, const value_list_t *vl)
 {
@@ -154,7 +154,7 @@ static int http_value_list_to_string (char *buffer, /* {{{ */
                 BUFFER_ADD (":%"PRIu64, vl->values[i].absolute);
         else
         {
-                ERROR ("http plugin: Unknown data source type: %i",
+                ERROR ("write_curl plugin: Unknown data source type: %i",
                                 ds->ds[i].type);
                 return (-1);
         }
@@ -163,9 +163,9 @@ static int http_value_list_to_string (char *buffer, /* {{{ */
 #undef BUFFER_ADD
 
 return (0);
-} /* }}} int http_value_list_to_string */
+} /* }}} int wc_value_list_to_string */
 
-static int http_config (const char *key, const char *value) /* {{{ */
+static int wc_config (const char *key, const char *value) /* {{{ */
 {
         if (strcasecmp ("URL", key) == 0)
         {
@@ -232,9 +232,9 @@ static int http_config (const char *key, const char *value) /* {{{ */
                 return (-1);
         }
         return (0);
-} /* }}} int http_config */
+} /* }}} int wc_config */
 
-static int http_send_buffer (char *buffer) /* {{{ */
+static int wc_send_buffer (char *buffer) /* {{{ */
 {
         int status = 0;
 
@@ -242,17 +242,17 @@ static int http_send_buffer (char *buffer) /* {{{ */
         status = curl_easy_perform (curl);
         if (status != 0)
         {
-                ERROR ("http plugin: curl_easy_perform failed with staus %i: %s",
+                ERROR ("write_curl plugin: curl_easy_perform failed with staus %i: %s",
                                 status, curl_errbuf);
         }
         return (status);
-} /* }}} http_send_buffer */
+} /* }}} wc_send_buffer */
 
-static int http_flush_nolock (int timeout) /* {{{ */
+static int wc_flush_nolock (int timeout) /* {{{ */
 {
         int status;
 
-        DEBUG ("http plugin: http_flush_nolock: timeout = %i; "
+        DEBUG ("write_curl plugin: wc_flush_nolock: timeout = %i; "
                         "send_buffer =\n  %s", timeout, send_buffer);
 
         if (timeout > 0)
@@ -270,26 +270,26 @@ static int http_flush_nolock (int timeout) /* {{{ */
                 return (0);
         }
 
-        status = http_send_buffer (send_buffer);
-        http_init_buffer ();
+        status = wc_send_buffer (send_buffer);
+        wc_init_buffer ();
 
         return (status);
-} /* }}} http_flush_nolock */
+} /* }}} wc_flush_nolock */
 
-static int http_flush (int timeout, /* {{{ */
+static int wc_flush (int timeout, /* {{{ */
                 const char *identifier __attribute__((unused)),
                 user_data_t *user_data __attribute__((unused)))
 {
         int status;
 
         pthread_mutex_lock (&send_lock);
-        status = http_flush_nolock (timeout);
+        status = wc_flush_nolock (timeout);
         pthread_mutex_unlock (&send_lock);
 
         return (status);
-} /* }}} int http_flush */
+} /* }}} int wc_flush */
 
-static int http_write_command (const data_set_t *ds, const value_list_t *vl) /* {{{ */
+static int wc_write_command (const data_set_t *ds, const value_list_t *vl) /* {{{ */
 {
         char key[10*DATA_MAX_NAME_LEN];
         char values[512];
@@ -299,23 +299,23 @@ static int http_write_command (const data_set_t *ds, const value_list_t *vl) /* 
         int status;
 
         if (0 != strcmp (ds->type, vl->type)) {
-                ERROR ("http plugin: DS type does not match value list type");
+                ERROR ("write_curl plugin: DS type does not match value list type");
                 return -1;
         }
 
         /* Copy the identifier to `key' and escape it. */
         status = FORMAT_VL (key, sizeof (key), vl);
         if (status != 0) {
-                ERROR ("http plugin: error with format_name");
+                ERROR ("write_curl plugin: error with format_name");
                 return (status);
         }
         escape_string (key, sizeof (key));
 
         /* Convert the values to an ASCII representation and put that into
          * `values'. */
-        status = http_value_list_to_string (values, sizeof (values), ds, vl);
+        status = wc_value_list_to_string (values, sizeof (values), ds, vl);
         if (status != 0) {
-                ERROR ("http plugin: error with http_value_list_to_string");
+                ERROR ("write_curl plugin: error with wc_value_list_to_string");
                 return (status);
         }
 
@@ -323,7 +323,7 @@ static int http_write_command (const data_set_t *ds, const value_list_t *vl) /* 
                         "PUTVAL %s interval=%i %s\n",
                         key, vl->interval, values);
         if (command_len >= sizeof (command)) {
-                ERROR ("http plugin: Command buffer too small: "
+                ERROR ("write_curl plugin: Command buffer too small: "
                                 "Need %zu bytes.", command_len + 1);
                 return (-1);
         }
@@ -333,7 +333,7 @@ static int http_write_command (const data_set_t *ds, const value_list_t *vl) /* 
         /* Check if we have enough space for this command. */
         if (command_len >= send_buffer_free)
         {
-                status = http_flush_nolock (/* timeout = */ -1);
+                status = wc_flush_nolock (/* timeout = */ -1);
                 if (status != 0)
                 {
                         pthread_mutex_unlock (&send_lock);
@@ -351,33 +351,33 @@ static int http_write_command (const data_set_t *ds, const value_list_t *vl) /* 
         pthread_mutex_unlock (&send_lock);
 
         return (0);
-} /* }}} int http_write_command */
+} /* }}} int wc_write_command */
 
-static int http_write (const data_set_t *ds, const value_list_t *vl, /* {{{ */
+static int wc_write (const data_set_t *ds, const value_list_t *vl, /* {{{ */
                 user_data_t __attribute__((unused)) *user_data)
 {
         int status;
 
-        status = http_write_command (ds, vl);
+        status = wc_write_command (ds, vl);
 
         return (status);
-} /* }}} int http_write */
+} /* }}} int wc_write */
 
-static int http_shutdown (void) /* {{{ */
+static int wc_shutdown (void) /* {{{ */
 {
-        http_flush_nolock (/* timeout = */ -1);
+        wc_flush_nolock (/* timeout = */ -1);
         curl_easy_cleanup(curl);
         return (0);
-} /* }}} int http_shutdown */
+} /* }}} int wc_shutdown */
 
 void module_register (void) /* {{{ */
 {
-        plugin_register_init("http", http_init);
-        plugin_register_config ("http", http_config,
+        plugin_register_init("write_curl", wc_init);
+        plugin_register_config ("write_curl", wc_config,
                         config_keys, config_keys_num);
-        plugin_register_write ("http", http_write, /* user_data = */ NULL);
-        plugin_register_flush ("http", http_flush, /* user_data = */ NULL);
-        plugin_register_shutdown("http", http_shutdown);
+        plugin_register_write ("write_curl", wc_write, /* user_data = */ NULL);
+        plugin_register_flush ("write_curl", wc_flush, /* user_data = */ NULL);
+        plugin_register_shutdown("write_curl", wc_shutdown);
 } /* }}} void module_register */
 
 /* vim: set fdm=marker sw=8 ts=8 tw=78 et : */
