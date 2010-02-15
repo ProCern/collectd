@@ -304,8 +304,6 @@ static int wh_value_list_to_string (char *buffer, /* {{{ */
         else if (ds->ds[i].type == DS_TYPE_COUNTER)
         {
                 if (cb->store_rates != 0) 
-                        BUFFER_ADD (":%llu", vl->values[i].counter);
-                else
                 {
 			if (rates == NULL)
 				rates = uc_get_rate (ds, vl);
@@ -317,6 +315,8 @@ static int wh_value_list_to_string (char *buffer, /* {{{ */
 			}
                         BUFFER_ADD (":%lf", rates[i]);
                 }
+                else
+                        BUFFER_ADD (":%llu", vl->values[i].counter);
         }
         else if (ds->ds[i].type == DS_TYPE_DERIVE)
                 BUFFER_ADD (":%"PRIi64, vl->values[i].derive);
