@@ -311,7 +311,7 @@ static int wh_value_list_to_string (char *buffer, /* {{{ */
 				rates = uc_get_rate (ds, vl);
 			if (rates == NULL)
 			{
-				WARNING ("csv plugin: "
+				WARNING ("write_http plugin: "
 						"uc_get_rate failed.");
 				return (-1);
 			}
