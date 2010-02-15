@@ -142,7 +142,7 @@ static int wh_callback_init (wh_callback_t *cb) /* {{{ */
                 ssnprintf (cb->credentials, credentials_size, "%s:%s",
                                 cb->user, (cb->pass == NULL) ? "" : cb->pass);
                 curl_easy_setopt (cb->curl, CURLOPT_USERPWD, cb->credentials);
-                curl_easy_setopt (cb->curl, CURLOPT_HTTPAUTH, CURLAUTH_DIGEST);
+                curl_easy_setopt (cb->curl, CURLOPT_HTTPAUTH, CURLAUTH_ANY);
         }
 
         curl_easy_setopt (cb->curl, CURLOPT_SSL_VERIFYPEER, cb->verify_peer);
@@ -276,6 +276,7 @@ static int wh_value_list_to_string (char *buffer, /* {{{ */
         size_t offset = 0;
         int status;
         int i;
+	gauge_t *rates = NULL;
 
         assert (0 == strcmp (ds->type, vl->type));
 
@@ -299,7 +300,10 @@ static int wh_value_list_to_string (char *buffer, /* {{{ */
         if (ds->ds[i].type == DS_TYPE_GAUGE)
                 BUFFER_ADD (":%f", vl->values[i].gauge);
         else if (ds->ds[i].type == DS_TYPE_COUNTER)
-                BUFFER_ADD (":%llu", vl->values[i].counter);
+        {
+                rates = uc_get_rate (ds, vl);
+                BUFFER_ADD (":%lf", rates[i]);
+        }
         else if (ds->ds[i].type == DS_TYPE_DERIVE)
                 BUFFER_ADD (":%"PRIi64, vl->values[i].derive);
         else if (ds->ds[i].type == DS_TYPE_ABSOLUTE)
